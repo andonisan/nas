@@ -1,0 +1,28 @@
+### GitOps-lite ignores
+.env
+
+# Local secrets directory (manual files, NOT versioned)
+secrets/
+secrets/*.txt
+secrets/*.key
+secrets/*.pem
+
+# Backups (if exported)
+backups/
+
+# SSL certificates (generated locally)
+ssl/
+
+# Configuración temporal SQLite
+*.sqlite-*
+*.db-*
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.log
+
+# Temporary files
+*.tmp
+.tmp/

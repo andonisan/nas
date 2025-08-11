@@ -1,0 +1,382 @@
+version: "3.9"
+
+x-common-env: &common-env
+  PUID: ${PUID:-1000}
+  PGID: ${PGID:-1000}
+  TZ: ${TZ:-Europe/Madrid}
+
+volumes:
+  jellyfin_config:
+  syncthing_config:
+  pg_data:
+  redis_data:
+  pg_dumps:
+  caddy_data:
+  caddy_config:
+  adguard_config:
+  adguard_work:
+  netdata_config:
+  netdata_lib:
+  netdata_cache:
+  uptime_data:
+  filebrowser_data:
+  tailscale_data:
+  vaultwarden_data:
+  portainer_data:
+  duplicati_config:
+  duplicati_tmp:
+  grafana_data:
+  influxdb_data:
+
+networks:
+  proxy:
+  backend:
+    internal: true
+
+services:
+  # Reverse proxy automático basado en labels
+  caddy:
+    image: lucaslorentz/caddy-docker-proxy:2.8
+    restart: unless-stopped
+    networks:
+      - proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      CADDY_LOG_LEVEL: warn
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    labels:
+      caddy.email: admin@home.arpa
+
+  homer:
+    image: b4bz/homer:latest
+    restart: unless-stopped
+    networks: [proxy]
+    volumes:
+      - ./configs/homer:/www/assets:ro
+    labels:
+      caddy: ${HEIMDALL_DOMAIN}
+      caddy.reverse_proxy: "{{upstreams 8080}}"
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+
+  jellyfin:
+    image: lscr.io/linuxserver/jellyfin:latest
+    restart: unless-stopped
+    networks: [proxy]
+    environment:
+      <<: *common-env
+      JELLYFIN_PublishedServerName: ${JELLYFIN_DOMAIN}
+    # Aceleración HW (ajusta /dev/dri si usas LXC/VM)
+    devices:
+      - /dev/dri:/dev/dri
+    volumes:
+      - jellyfin_config:/config
+      - ${MEDIA_MOVIES_PATH:-/mnt/media/movies}:/data/movies:ro
+      - ${MEDIA_SERIES_PATH:-/mnt/media/series}:/data/series:ro
+    labels:
+      caddy: ${JELLYFIN_DOMAIN}
+      caddy.reverse_proxy: "{{upstreams 8096}}"
+
+  syncthing:
+    image: lscr.io/linuxserver/syncthing:latest
+    restart: unless-stopped
+    networks: [proxy]
+    environment: *common-env
+    volumes:
+      - syncthing_config:/config
+      - ${SYNC_DATA_PATH:-/mnt/data/shared}:/data/shared
+    labels:
+      # Panel de Syncthing bajo subdominio (opcional)
+      caddy: "sync.${HEIMDALL_DOMAIN}"
+      caddy.reverse_proxy: "{{upstreams 8384}}"
+
+  # Perfil photos (Immich + DB + Redis + backups)
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["photos"]
+    restart: unless-stopped
+    networks:
+      - backend
+    environment:
+      POSTGRES_USER: ${PG_USER:-immich}
+      POSTGRES_DB: ${PG_DB:-immich}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      # Tuning ligero para 12GB RAM host (instancia pequeña)
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    secrets:
+      - postgres_password
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    command: ["postgres","-c","shared_buffers=128MB","-c","effective_cache_size=512MB","-c","work_mem=4MB","-c","maintenance_work_mem=64MB","-c","wal_buffers=8MB","-c","max_connections=30"]
+
+  redis:
+    image: redis:7-alpine
+    profiles: ["photos"]
+    restart: unless-stopped
+    networks:
+      - backend
+    command: ["redis-server","--save","60","1","--loglevel","warning"]
+    volumes:
+      - redis_data:/data
+
+  immich-server:
+    image: ghcr.io/immich-app/immich-server:${IMMICH_TAG:-release}
+    profiles: ["photos"]
+    depends_on: [postgres, redis]
+    networks:
+      - proxy
+      - backend
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USERNAME: ${PG_USER:-immich}
+      DB_DATABASE_NAME: ${PG_DB:-immich}
+      DB_PASSWORD: placeholder
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      MACHINE_LEARNING_ENABLED: ${IMMICH_ML:-false}
+      IMAGES_WORKERS: ${IMAGES_WORKERS:-1}
+      VIDEOS_WORKERS: ${VIDEOS_WORKERS:-1}
+    volumes:
+      - ${IMMICH_LIBRARY_PATH:-/mnt/photos/library}:/usr/src/app/upload
+    labels:
+      caddy: ${IMMICH_DOMAIN}
+      caddy.reverse_proxy: "{{upstreams 2283}}"
+
+  immich-machine-learning:
+    image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_TAG:-release}
+    profiles: ["photos"]
+    networks:
+      - backend
+    environment:
+      MACHINE_LEARNING_ENABLED: ${IMMICH_ML:-false}
+
+  pgbackups:
+    image: prodrigestivill/postgres-backup-local:16
+    profiles: ["photos"]
+    depends_on: [postgres]
+    restart: unless-stopped
+    networks: [backend]
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: ${PG_USER:-immich}
+      POSTGRES_DB: ${PG_DB:-immich}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      SCHEDULE: "${PG_BACKUP_CRON:-0 3 * * *}"
+      BACKUP_DIR: /backups
+      BACKUP_KEEP_DAYS: 7
+      POSTGRES_EXTRA_OPTS: "-Z6"
+    secrets:
+      - postgres_password
+    volumes:
+      - pg_dumps:/backups
+
+  watchtower:
+    image: containrrr/watchtower
+    restart: unless-stopped
+    networks: [backend]
+    command: --cleanup --schedule "0 0 4 * * *"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    # Puedes eliminar este servicio si no quieres actualizaciones automáticas
+    profiles: ["watchtower"]
+
+  # Bloqueo de anuncios / DNS interno (perfil network)
+  adguardhome:
+    image: adguard/adguardhome:latest
+    profiles: ["network"]
+    restart: unless-stopped
+    networks:
+      - proxy
+    # Exponer sólo si necesitas UI vía Caddy; DNS (53) normalmente en host o red interna
+    ports:
+      - "${ADGUARD_BIND_IP:-127.0.0.1}:53:53/udp"
+      - "${ADGUARD_BIND_IP:-127.0.0.1}:53:53/tcp"
+    volumes:
+      - adguard_config:/opt/adguardhome/conf
+      - adguard_work:/opt/adguardhome/work
+    labels:
+      caddy: ${ADGUARD_DOMAIN}
+      caddy.reverse_proxy: "{{upstreams 3000}}"
+
+  # Netdata (monitoring profile)
+  netdata:
+    image: netdata/netdata:stable
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    hostname: homelab-netdata
+    pid: host
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - apparmor:unconfined
+    networks:
+      - proxy
+    ports:
+      - "19999:19999"  # opcional; puede omitirse y usar sólo Caddy
+    volumes:
+      - netdata_config:/etc/netdata
+      - netdata_lib:/var/lib/netdata
+      - netdata_cache:/var/cache/netdata
+      - /etc/passwd:/host/etc/passwd:ro
+      - /etc/group:/host/etc/group:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /etc/os-release:/host/etc/os-release:ro
+    environment:
+      NETDATA_CLAIM_TOKEN: ${NETDATA_CLAIM_TOKEN:-}
+      NETDATA_CLAIM_ROOMS: ${NETDATA_CLAIM_ROOMS:-}
+      NETDATA_CLAIM_URL: ${NETDATA_CLAIM_URL:-https://app.netdata.cloud}
+    labels:
+      caddy: ${METRICS_DOMAIN}
+      caddy.reverse_proxy: "{{upstreams 19999}}"
+
+  # Uptime Kuma (monitoring profile)
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    networks:
+      - proxy
+    volumes:
+      - uptime_data:/app/data
+    labels:
+      caddy: ${UPTIME_DOMAIN}
+      caddy.reverse_proxy: "{{upstreams 3001}}"
+
+  # File Browser – alternativa ligera a un stack pesado (files profile)
+  filebrowser:
+    image: filebrowser/filebrowser:latest
+    profiles: ["files"]
+    restart: unless-stopped
+    networks:
+      - proxy
+    environment:
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+    volumes:
+      - filebrowser_data:/database
+      - ${FILEBROWSER_SCOPE:-/srv/data}:/srv
+    labels:
+      caddy: ${FILES_DOMAIN}
+      caddy.reverse_proxy: "{{upstreams 80}}"
+
+  # Tailscale - VPN mesh para acceso remoto seguro
+  tailscale:
+    image: tailscale/tailscale:latest
+    profiles: ["network", "vpn"]
+    restart: unless-stopped
+    hostname: homelab-tailscale
+    environment:
+      - TS_AUTHKEY=${TAILSCALE_AUTHKEY}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=false
+      - TS_EXTRA_ARGS=--advertise-routes=${TAILSCALE_ROUTES:-192.168.1.0/24} --accept-routes
+    volumes:
+      - tailscale_data:/var/lib/tailscale
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv6.conf.all.forwarding=1
+    # Opcional: exponer puertos específicos para subnet routing
+    # network_mode: host  # Descomentar si necesitas subnet routing completo
+
+  # Vaultwarden - Gestor de contraseñas Bitwarden compatible
+  vaultwarden:
+    image: vaultwarden/server:latest
+    profiles: ["security"]
+    restart: unless-stopped
+    networks: [proxy]
+    environment:
+      WEBSOCKET_ENABLED: "true"
+      SIGNUPS_ALLOWED: "false"
+      ADMIN_TOKEN: ${VAULTWARDEN_ADMIN_TOKEN}
+      DOMAIN: https://${VAULT_DOMAIN}
+    volumes:
+      - vaultwarden_data:/data
+    labels:
+      caddy: ${VAULT_DOMAIN}
+      caddy.reverse_proxy: "{{upstreams 80}}"
+      caddy.reverse_proxy.websockets: ""
+
+  # Portainer - Gestión visual de Docker
+  portainer:
+    image: portainer/portainer-ce:latest
+    profiles: ["management"]
+    restart: unless-stopped
+    networks: [proxy]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - portainer_data:/data
+    labels:
+      caddy: ${PORTAINER_DOMAIN}
+      caddy.reverse_proxy: "{{upstreams 9000}}"
+
+  # Duplicati - Backups automáticos a la nube
+  duplicati:
+    image: lscr.io/linuxserver/duplicati:latest
+    profiles: ["backup"]
+    restart: unless-stopped
+    networks: [proxy]
+    environment: *common-env
+    volumes:
+      - duplicati_config:/config
+      - ${BACKUP_SOURCE_PATH:-/srv/data}:/source:ro
+      - ${DUPLICATI_BACKUP_PATH:-/srv/backups/duplicati}:/backups
+      - duplicati_tmp:/tmp
+    labels:
+      caddy: ${DUPLICATI_DOMAIN}
+      caddy.reverse_proxy: "{{upstreams 8200}}"
+
+  # InfluxDB - Base de datos de métricas (perfil monitoring avanzado)
+  influxdb:
+    image: influxdb:2.7-alpine
+    profiles: ["monitoring-advanced"]
+    restart: unless-stopped
+    networks: [backend]
+    environment:
+      INFLUXDB_INIT_MODE: setup
+      INFLUXDB_INIT_USERNAME: ${INFLUX_USER:-admin}
+      INFLUXDB_INIT_PASSWORD: ${INFLUX_PASSWORD:-admin123}
+      INFLUXDB_INIT_ORG: ${INFLUX_ORG:-homelab}
+      INFLUXDB_INIT_BUCKET: ${INFLUX_BUCKET:-metrics}
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # Grafana - Dashboards avanzados de métricas
+  grafana:
+    image: grafana/grafana:latest
+    profiles: ["monitoring-advanced"]
+    restart: unless-stopped
+    networks: [proxy, backend]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_INSTALL_PLUGINS: ${GRAFANA_PLUGINS:-grafana-clock-panel,grafana-simple-json-datasource}
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    labels:
+      caddy: ${GRAFANA_DOMAIN}
+      caddy.reverse_proxy: "{{upstreams 3000}}"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password.txt

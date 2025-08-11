@@ -1,0 +1,137 @@
+---
+# Homer configuration for Homelab
+# Documentation: https://github.com/bastienwirtz/homer
+
+title: "Homelab Dashboard"
+subtitle: "N150 - 12GB RAM"
+logo: "assets/icons/homer.png"
+icon: "fas fa-home"
+
+header: true
+footer: false
+
+theme: default
+colors:
+  light:
+    highlight-primary: "#3367d6"
+    highlight-secondary: "#4285f4"
+    highlight-hover: "#5a95f5"
+    background: "#f5f5f5"
+    card-background: "#ffffff"
+    text: "#363636"
+    text-header: "#ffffff"
+    text-title: "#303030"
+    text-subtitle: "#424242"
+    card-shadow: rgba(0, 0, 0, 0.1)
+    link: "#3273dc"
+    link-hover: "#363636"
+  dark:
+    highlight-primary: "#3367d6"
+    highlight-secondary: "#4285f4"
+    highlight-hover: "#5a95f5"
+    background: "#131313"
+    card-background: "#2b2b2b"
+    text: "#eaeaea"
+    text-header: "#ffffff"
+    text-title: "#fafafa"
+    text-subtitle: "#f5f5f5"
+    card-shadow: rgba(0, 0, 0, 0.4)
+    link: "#3273dc"
+    link-hover: "#ffdd57"
+
+# Optional navbar
+links: []
+
+# Services organized by category
+services:
+  - name: "Core Services"
+    icon: "fas fa-server"
+    items:
+      - name: "Jellyfin"
+        logo: "assets/icons/jellyfin.png"
+        subtitle: "Media Server"
+        tag: "media"
+        url: "http://jellyfin.home.arpa"
+        target: "_blank"
+        
+      - name: "Syncthing"
+        logo: "assets/icons/syncthing.png"
+        subtitle: "File Synchronization"
+        tag: "sync"
+        url: "http://sync.dashboard.home.arpa"
+        target: "_blank"
+
+  - name: "Photos & Media"
+    icon: "fas fa-images"
+    items:
+      - name: "Immich"
+        logo: "assets/icons/immich.png"
+        subtitle: "Photo Management"
+        tag: "photos"
+        url: "http://fotos.home.arpa"
+        target: "_blank"
+
+  - name: "Monitoring"
+    icon: "fas fa-chart-line"
+    items:
+      - name: "Netdata"
+        logo: "assets/icons/netdata.png"
+        subtitle: "Real-time Monitoring"
+        tag: "monitoring"
+        url: "http://metrics.home.arpa"
+        target: "_blank"
+        
+      - name: "Uptime Kuma"
+        logo: "assets/icons/uptime-kuma.png"
+        subtitle: "Uptime Monitoring"
+        tag: "monitoring"
+        url: "http://status.home.arpa"
+        target: "_blank"
+        
+      - name: "Grafana"
+        logo: "assets/icons/grafana.png"
+        subtitle: "Advanced Dashboards"
+        tag: "monitoring-advanced"
+        url: "http://grafana.home.arpa"
+        target: "_blank"
+
+  - name: "Network & Security"
+    icon: "fas fa-shield-alt"
+    items:
+      - name: "AdGuard Home"
+        logo: "assets/icons/adguard.png"
+        subtitle: "DNS & Ad Blocking"
+        tag: "network"
+        url: "http://adguard.home.arpa"
+        target: "_blank"
+        
+      - name: "Vaultwarden"
+        logo: "assets/icons/bitwarden.png"
+        subtitle: "Password Manager"
+        tag: "security"
+        url: "http://vault.home.arpa"
+        target: "_blank"
+
+  - name: "Management & Files"
+    icon: "fas fa-cogs"
+    items:
+      - name: "Portainer"
+        logo: "assets/icons/portainer.png"
+        subtitle: "Docker Management"
+        tag: "management"
+        url: "http://docker.home.arpa"
+        target: "_blank"
+        
+      - name: "File Browser"
+        logo: "assets/icons/filebrowser.png"
+        subtitle: "File Management"
+        tag: "files"
+        url: "http://files.home.arpa"
+        target: "_blank"
+        
+      - name: "Duplicati"
+        logo: "assets/icons/duplicati.png"
+        subtitle: "Backup Management"
+        tag: "backup"
+        url: "http://backup.home.arpa"
+        target: "_blank"

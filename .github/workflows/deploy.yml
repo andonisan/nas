@@ -1,0 +1,28 @@
+name: Deploy to Homelab
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (reference only)
+        uses: actions/checkout@v4
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HOST }}
+            
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            set -e
+            cd /srv/homelab || exit 1
+            git fetch --all
+            git reset --hard origin/main
+            docker compose pull
+            docker compose up -d --remove-orphans
+            # Limpieza de imágenes viejas >7 días
+            docker image prune -f --filter "until=168h"
