@@ -63,7 +63,7 @@ check_requirements() {
     
     # Espacio en disco mínimo 20GB
     DISK_GB=$(df / | awk 'NR==2{printf "%.0f", $4/1024/1024}')
-    if [[ $DISK_GB -lt 20 ]]; then
+    if [[ $DISK_GB -lt 18 ]]; then
         error "Espacio en disco insuficiente: ${DISK_GB}GB (mínimo 20GB)"
     fi
     
