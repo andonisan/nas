@@ -123,9 +123,15 @@ install_docker() {
 configure_system() {
     log "Configurando sistema para homelab..."
     
-    # Crear usuario apps si no existe
+    # Crear usuario apps si no existe (con UID disponible)
     if ! id "apps" &>/dev/null; then
-        sudo useradd -u 1000 -s /bin/bash -m apps || true
+        # Buscar UID disponible si 1000 está ocupado
+        if id -u 1000 &>/dev/null; then
+            warn "UID 1000 ya existe, usando UID disponible automático"
+            sudo useradd -s /bin/bash -m apps || true
+        else
+            sudo useradd -u 1000 -s /bin/bash -m apps || true
+        fi
     fi
     
     # Configurar límites de archivo para contenedores
@@ -150,6 +156,9 @@ EOF
     
     sudo sysctl -p /etc/sysctl.d/99-homelab.conf
     
+    # Crear directorio para journald config si no existe
+    sudo mkdir -p /etc/systemd/journald.conf.d
+    
     # Configurar journald para evitar logs excesivos
     sudo tee /etc/systemd/journald.conf.d/homelab.conf > /dev/null <<EOF
 [Journal]
@@ -158,7 +167,52 @@ RuntimeMaxUse=100M
 MaxRetentionSec=7day
 EOF
     
-    sudo systemctl restart systemd-journald
+    sudo systemctl restart systemd-journald || warn "No se pudo reiniciar journald, continuando..."
+    
+    log "Sistema configurado correctamente"
+}
+
+# Validar configuración del sistema
+validate_system() {
+    log "Validando configuración del sistema..."
+    
+    # Verificar que los archivos de configuración se crearon
+    if [[ ! -f /etc/sysctl.d/99-homelab.conf ]]; then
+        error "No se pudo crear archivo sysctl"
+    fi
+    
+    # Verificar que sysctl se aplicó
+    if ! sysctl vm.max_map_count | grep -q 262144; then
+        warn "vm.max_map_count no se aplicó correctamente"
+    fi
+    
+    # Verificar usuario apps
+    if id "apps" &>/dev/null; then
+        info "Usuario apps creado: UID $(id -u apps)"
+    else
+        warn "Usuario apps no se pudo crear"
+    fi
+    
+    info "Validación del sistema completada"
+}
+
+# Limpiar configuraciones anteriores si existen
+cleanup_previous_config() {
+    log "Limpiando configuraciones anteriores..."
+    
+    # Limpiar configuraciones systemd problemáticas
+    if [[ -f /etc/systemd/journald.conf.d/homelab.conf ]]; then
+        warn "Configuración journald anterior encontrada, limpiando..."
+        sudo rm -f /etc/systemd/journald.conf.d/homelab.conf
+    fi
+    
+    # Verificar conflictos de usuario
+    if id -u 1000 &>/dev/null && [[ $(id -un 1000) != "apps" ]]; then
+        warn "UID 1000 ocupado por usuario: $(id -un 1000)"
+        info "Se usará UID automático para usuario apps"
+    fi
+    
+    info "Limpieza completada"
 }
 
 # Instalar y configurar Tailscale
@@ -504,7 +558,9 @@ main() {
     update_system
     install_docker
     install_tailscale
+    cleanup_previous_config
     configure_system
+    validate_system
     create_directories
     clone_repository
     configure_environment
